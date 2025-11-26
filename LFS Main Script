@@ -1,0 +1,612 @@
+#!/usr/bin/env python3
+"""
+Complete EC2 LFS Development Environment Setup Script
+Installs: VS Code Server, AWS CLI, AWS SDK (boto3), GitHub CLI, and all LFS build tools
+Then clones your GitHub repository
+
+Run this on your EC2 instance via browser terminal
+"""
+
+import os
+import sys
+import subprocess
+import time
+from pathlib import Path
+
+class Colors:
+    """ANSI color codes"""
+    HEADER = '\033[95m'
+    BLUE = '\033[94m'
+    CYAN = '\033[96m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    RED = '\033[91m'
+    END = '\033[0m'
+    BOLD = '\033[1m'
+
+def print_header(message):
+    """Print formatted header"""
+    print(f"\n{Colors.HEADER}{Colors.BOLD}{'='*70}")
+    print(f"{message}")
+    print(f"{'='*70}{Colors.END}\n")
+
+def print_success(message):
+    """Print success message"""
+    print(f"{Colors.GREEN}✓ {message}{Colors.END}")
+
+def print_error(message):
+    """Print error message"""
+    print(f"{Colors.RED}✗ {message}{Colors.END}")
+
+def print_info(message):
+    """Print info message"""
+    print(f"{Colors.CYAN}ℹ {message}{Colors.END}")
+
+def print_warning(message):
+    """Print warning message"""
+    print(f"{Colors.YELLOW}⚠ {message}{Colors.END}")
+
+def run_command(command, check=True, shell=False, capture=True):
+    """Run shell command and return result"""
+    try:
+        if isinstance(command, str) and not shell:
+            command = command.split()
+        
+        if capture:
+            result = subprocess.run(
+                command,
+                check=check,
+                shell=shell,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            return result.returncode == 0, result.stdout, result.stderr
+        else:
+            # Show output in real-time
+            result = subprocess.run(
+                command,
+                check=check,
+                shell=shell
+            )
+            return result.returncode == 0, "", ""
+    except subprocess.CalledProcessError as e:
+        return False, "", str(e)
+    except Exception as e:
+        return False, "", str(e)
+
+def check_ubuntu():
+    """Verify this is Ubuntu"""
+    try:
+        with open("/etc/os-release") as f:
+            content = f.read()
+            if "ubuntu" in content.lower():
+                return True
+    except:
+        pass
+    return False
+
+def update_system():
+    """Update system packages"""
+    print_header("Step 1: Updating System Packages")
+    print_info("This may take 2-3 minutes...")
+    
+    success, _, _ = run_command("sudo apt update", capture=False)
+    if not success:
+        print_error("Failed to update package list")
+        return False
+    
+    success, _, _ = run_command("sudo apt upgrade -y", capture=False)
+    if not success:
+        print_warning("System upgrade had issues, but continuing...")
+    
+    print_success("System updated successfully!")
+    return True
+
+def install_lfs_build_tools():
+    """Install all required LFS build tools"""
+    print_header("Step 2: Installing LFS Build Tools")
+    print_info("Installing development tools required for LFS build...")
+    
+    packages = [
+        "build-essential",
+        "bison",
+        "gawk",
+        "texinfo",
+        "wget",
+        "curl",
+        "libssl-dev",
+        "bc",
+        "libelf-dev",
+        "flex",
+        "libncurses5-dev",
+        "gperf",
+        "autoconf",
+        "automake",
+        "libtool",
+        "pkg-config",
+        "python3",
+        "python3-pip",
+        "git",
+        "vim",
+        "tmux",
+        "htop",
+        "unzip",
+        "jq"
+    ]
+    
+    print_info(f"Installing {len(packages)} packages...")
+    cmd = f"sudo apt install -y {' '.join(packages)}"
+    success, _, _ = run_command(cmd, shell=True, capture=False)
+    
+    if success:
+        print_success("LFS build tools installed successfully!")
+        return True
+    else:
+        print_error("Failed to install some build tools")
+        return False
+
+def install_aws_cli():
+    """Install AWS CLI v2"""
+    print_header("Step 3: Installing AWS CLI v2")
+    
+    # Check if already installed
+    success, stdout, _ = run_command("aws --version", check=False)
+    if success and "aws-cli/2" in stdout:
+        print_success("AWS CLI v2 is already installed!")
+        print_info(stdout.strip())
+        return True
+    
+    print_info("Downloading AWS CLI v2 installer...")
+    install_dir = "/tmp/awscli"
+    os.makedirs(install_dir, exist_ok=True)
+    
+    # Download
+    success, _, _ = run_command(
+        f"curl 'https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip' -o {install_dir}/awscliv2.zip",
+        shell=True
+    )
+    
+    if not success:
+        print_error("Failed to download AWS CLI")
+        return False
+    
+    print_info("Extracting installer...")
+    success, _, _ = run_command(f"unzip -q -o {install_dir}/awscliv2.zip -d {install_dir}", shell=True)
+    
+    if not success:
+        print_error("Failed to extract AWS CLI")
+        return False
+    
+    print_info("Installing AWS CLI...")
+    success, _, _ = run_command(f"sudo {install_dir}/aws/install --update", shell=True, capture=False)
+    
+    # Cleanup
+    run_command(f"rm -rf {install_dir}", shell=True, check=False)
+    
+    if success:
+        # Verify installation
+        success, stdout, _ = run_command("aws --version", check=False)
+        if success:
+            print_success("AWS CLI v2 installed successfully!")
+            print_info(stdout.strip())
+            return True
+    
+    print_error("Failed to install AWS CLI")
+    return False
+
+def install_aws_sdk():
+    """Install AWS SDK for Python (boto3)"""
+    print_header("Step 4: Installing AWS SDK (boto3)")
+    
+    # Check if already installed
+    success, _, _ = run_command("python3 -c 'import boto3'", check=False)
+    if success:
+        print_success("AWS SDK (boto3) is already installed!")
+        return True
+    
+    print_info("Installing boto3 and botocore...")
+    success, _, _ = run_command("pip3 install --user boto3 botocore", shell=True, capture=False)
+    
+    if success:
+        print_success("AWS SDK (boto3) installed successfully!")
+        
+        # Verify
+        success, stdout, _ = run_command(
+            "python3 -c 'import boto3; print(f\"boto3 version: {boto3.__version__}\")'",
+            shell=True
+        )
+        if success:
+            print_info(stdout.strip())
+        return True
+    else:
+        print_error("Failed to install boto3")
+        return False
+
+def install_vscode_server():
+    """Install VS Code Server (for browser/remote access)"""
+    print_header("Step 5: Installing VS Code Server")
+    
+    print_info("Installing code-server (VS Code in browser)...")
+    print_info("This allows you to use VS Code through your browser!")
+    
+    # Install code-server
+    print_info("Downloading installation script...")
+    success, _, _ = run_command(
+        "curl -fsSL https://code-server.dev/install.sh | sh",
+        shell=True,
+        capture=False
+    )
+    
+    if success:
+        print_success("VS Code Server installed successfully!")
+        print_info("To start: sudo systemctl enable --now code-server@$USER")
+        print_info("Access at: http://localhost:8080")
+        return True
+    else:
+        print_warning("Failed to install VS Code Server, but continuing...")
+        return False
+
+def install_github_cli():
+    """Install GitHub CLI"""
+    print_header("Step 6: Installing GitHub CLI")
+    
+    # Check if already installed
+    success, stdout, _ = run_command("gh --version", check=False)
+    if success:
+        print_success("GitHub CLI is already installed!")
+        print_info(stdout.strip())
+        return True
+    
+    print_info("Adding GitHub CLI repository...")
+    
+    commands = [
+        "type -p curl >/dev/null || sudo apt install curl -y",
+        "curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg",
+        "sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg",
+        'echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null',
+        "sudo apt update",
+        "sudo apt install gh -y"
+    ]
+    
+    for cmd in commands:
+        success, _, _ = run_command(cmd, shell=True, capture=False)
+        if not success and "apt install gh" in cmd:
+            print_error("Failed to install GitHub CLI")
+            return False
+    
+    # Verify
+    success, stdout, _ = run_command("gh --version")
+    if success:
+        print_success("GitHub CLI installed successfully!")
+        print_info(stdout.strip())
+        return True
+    
+    return False
+
+def setup_lfs_environment():
+    """Set up LFS environment variables and directories"""
+    print_header("Step 7: Setting Up LFS Environment")
+    
+    lfs_path = "/mnt/lfs"
+    
+    # Set environment variable
+    print_info("Setting LFS environment variable...")
+    
+    # Add to /etc/profile
+    profile_line = f'export LFS={lfs_path}'
+    success, _, _ = run_command(
+        f'echo \'{profile_line}\' | sudo tee -a /etc/profile',
+        shell=True
+    )
+    
+    # Add to current user's bashrc
+    bashrc_path = os.path.expanduser("~/.bashrc")
+    with open(bashrc_path, 'a') as f:
+        f.write(f'\n# LFS Environment\n{profile_line}\n')
+    
+    # Set for current session
+    os.environ['LFS'] = lfs_path
+    
+    print_info("Creating LFS directory structure...")
+    
+    # Create directories
+    directories = [
+        lfs_path,
+        f"{lfs_path}/sources",
+        f"{lfs_path}/tools",
+        f"{lfs_path}/boot"
+    ]
+    
+    for directory in directories:
+        run_command(f"sudo mkdir -pv {directory}", shell=True, capture=False)
+    
+    # Set permissions on sources
+    run_command(f"sudo chmod -v a+wt {lfs_path}/sources", shell=True, capture=False)
+    
+    print_success("LFS environment configured!")
+    print_info(f"LFS variable set to: {lfs_path}")
+    
+    return True
+
+def configure_github():
+    """Configure GitHub authentication"""
+    print_header("Step 8: Configuring GitHub")
+    
+    print_info("GitHub CLI is installed. You need to authenticate.")
+    print_info("We'll start the authentication process now.")
+    print()
+    
+    print_warning("IMPORTANT: When prompted, choose:")
+    print_info("  1. GitHub.com")
+    print_info("  2. HTTPS (not SSH)")
+    print_info("  3. Yes (authenticate Git)")
+    print_info("  4. Login with web browser")
+    print()
+    print_info("You'll get a one-time code. Copy it, then:")
+    print_info("  - Go to https://github.com/login/device in your desktop browser")
+    print_info("  - Paste the code and authorize")
+    print()
+    
+    input("Press Enter when ready to authenticate with GitHub...")
+    
+    # Run gh auth login interactively
+    subprocess.run(["gh", "auth", "login"])
+    
+    # Verify authentication
+    success, stdout, _ = run_command("gh auth status")
+    if success and "Logged in" in stdout:
+        print_success("GitHub authentication successful!")
+        
+        # Configure git
+        print_info("Configuring git...")
+        print()
+        git_name = input("Enter your name for git commits: ")
+        git_email = input("Enter your email for git commits: ")
+        
+        run_command(f'git config --global user.name "{git_name}"', shell=True)
+        run_command(f'git config --global user.email "{git_email}"', shell=True)
+        
+        print_success("Git configured successfully!")
+        return True
+    else:
+        print_error("GitHub authentication failed")
+        print_info("You can authenticate later with: gh auth login")
+        return False
+
+def clone_repository():
+    """Clone user's GitHub repository"""
+    print_header("Step 9: Cloning Your GitHub Repository")
+    
+    print_info("Enter your GitHub repository details:")
+    print_info("Format: username/repository-name")
+    print_info("Example: johndoe/lfs-build-project")
+    print()
+    
+    repo = input("Enter repository (username/repo): ").strip()
+    
+    if not repo or '/' not in repo:
+        print_error("Invalid repository format")
+        return False
+    
+    print_info(f"Cloning {repo}...")
+    
+    # Clone to home directory
+    home = os.path.expanduser("~")
+    repo_name = repo.split('/')[-1]
+    target_path = os.path.join(home, repo_name)
+    
+    if os.path.exists(target_path):
+        print_warning(f"Directory {target_path} already exists")
+        response = input("Remove and re-clone? (y/n): ").lower()
+        if response == 'y':
+            run_command(f"rm -rf {target_path}", shell=True)
+        else:
+            print_info("Skipping clone")
+            return True
+    
+    success, _, _ = run_command(f"gh repo clone {repo}", shell=True, capture=False)
+    
+    if success:
+        print_success(f"Repository cloned to ~/{repo_name}")
+        print_info(f"Navigate to it with: cd ~/{repo_name}")
+        return True
+    else:
+        print_error("Failed to clone repository")
+        print_info("You can clone manually later with: gh repo clone username/repo")
+        return False
+
+def create_helpful_aliases():
+    """Create helpful bash aliases"""
+    print_header("Step 10: Creating Helpful Aliases")
+    
+    bashrc_path = os.path.expanduser("~/.bashrc")
+    
+    aliases = """
+# LFS Build Aliases
+alias ll='ls -lah'
+alias lfs='sudo su - lfs'
+alias gosrc='cd /mnt/lfs/sources'
+alias goproject='cd ~/lfs-build-project'  # Adjust if your repo has different name
+alias status='df -h && echo && free -h && echo && uptime'
+alias gst='git status'
+alias gpull='git pull'
+alias gpush='git add . && git commit -m "Update" && git push'
+alias tmuxlfs='tmux new -s lfs-build'
+alias tmuxattach='tmux attach -t lfs-build'
+
+# Quick AWS CLI
+alias ec2-instances='aws ec2 describe-instances --query "Reservations[*].Instances[*].[InstanceId,State.Name,PublicIpAddress]" --output table'
+
+# GitHub shortcuts
+alias ghstatus='gh auth status'
+alias ghrepo='gh repo view'
+"""
+    
+    with open(bashrc_path, 'a') as f:
+        f.write(aliases)
+    
+    print_success("Helpful aliases added to ~/.bashrc")
+    print_info("Aliases will be available after: source ~/.bashrc")
+    print_info("Or in your next login session")
+    
+    # Show some useful aliases
+    print()
+    print_info("Useful aliases created:")
+    print_info("  lfs         - Switch to lfs user")
+    print_info("  gosrc       - Go to /mnt/lfs/sources")
+    print_info("  goproject   - Go to your GitHub repo")
+    print_info("  status      - Show system status")
+    print_info("  tmuxlfs     - Start tmux session for LFS")
+    print_info("  gpull/gpush - Quick git operations")
+    
+    return True
+
+def create_setup_complete_marker():
+    """Create a marker file to indicate setup is complete"""
+    marker_path = os.path.expanduser("~/.lfs-setup-complete")
+    with open(marker_path, 'w') as f:
+        f.write(f"Setup completed at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+    
+    # Also create in /var/log for sudo user
+    run_command(
+        f'echo "LFS setup completed at {time.strftime("%Y-%m-%d %H:%M:%S")}" | sudo tee /var/log/lfs-setup-complete.log',
+        shell=True,
+        check=False
+    )
+
+def print_next_steps():
+    """Print next steps for the user"""
+    print_header("🎉 Setup Complete!")
+    
+    print(f"{Colors.GREEN}✓ System packages updated")
+    print(f"✓ LFS build tools installed")
+    print(f"✓ AWS CLI v2 installed")
+    print(f"✓ AWS SDK (boto3) installed")
+    print(f"✓ VS Code Server installed")
+    print(f"✓ GitHub CLI installed and configured")
+    print(f"✓ LFS environment set up")
+    print(f"✓ GitHub repository cloned")
+    print(f"✓ Helpful aliases created{Colors.END}")
+    
+    print(f"\n{Colors.BOLD}{Colors.CYAN}Next Steps:{Colors.END}")
+    
+    print(f"\n{Colors.YELLOW}1. Reload your bash configuration:{Colors.END}")
+    print(f"   source ~/.bashrc")
+    
+    print(f"\n{Colors.YELLOW}2. Verify installations:{Colors.END}")
+    print(f"   aws --version")
+    print(f"   gh --version")
+    print(f"   python3 -c 'import boto3; print(boto3.__version__)'")
+    print(f"   echo $LFS")
+    
+    print(f"\n{Colors.YELLOW}3. Navigate to your project:{Colors.END}")
+    print(f"   cd ~/lfs-build-project  # or use 'goproject' alias")
+    
+    print(f"\n{Colors.YELLOW}4. Download LFS packages:{Colors.END}")
+    print(f"   cd /mnt/lfs/sources  # or use 'gosrc' alias")
+    print(f"   sudo wget https://www.linuxfromscratch.org/lfs/view/stable/wget-list")
+    print(f"   sudo wget --input-file=wget-list --continue --directory-prefix=/mnt/lfs/sources")
+    print(f"   sudo wget https://www.linuxfromscratch.org/lfs/view/stable/md5sums")
+    print(f"   md5sum -c md5sums")
+    
+    print(f"\n{Colors.YELLOW}5. Create LFS user:{Colors.END}")
+    print(f"   sudo groupadd lfs")
+    print(f"   sudo useradd -s /bin/bash -g lfs -m -k /dev/null lfs")
+    print(f"   sudo passwd lfs")
+    print(f"   sudo chown -v lfs /mnt/lfs/{{usr,lib,var,etc,bin,sbin,tools,sources}}")
+    
+    print(f"\n{Colors.YELLOW}6. Start building (in tmux for persistence):{Colors.END}")
+    print(f"   tmux new -s lfs-build  # or use 'tmuxlfs' alias")
+    print(f"   sudo su - lfs  # or use 'lfs' alias")
+    print(f"   cd /mnt/lfs/sources")
+    print(f"   # Begin Chapter 5 of LFS book!")
+    
+    print(f"\n{Colors.YELLOW}7. Use tmux to persist your session:{Colors.END}")
+    print(f"   Detach: Ctrl+B, then D")
+    print(f"   Reattach: tmux attach -t lfs-build")
+    
+    print(f"\n{Colors.CYAN}📚 Resources:{Colors.END}")
+    print(f"   LFS Book: https://www.linuxfromscratch.org/lfs/view/stable/")
+    print(f"   Your GitHub: https://github.com/YOUR-USERNAME/lfs-build-project")
+    
+    print(f"\n{Colors.CYAN}💡 Pro Tips:{Colors.END}")
+    print(f"   • Use tmux for all long-running builds")
+    print(f"   • Commit to GitHub after each major milestone")
+    print(f"   • Stop your EC2 instance when not building (save money!)")
+    print(f"   • Check AWS Console for billing regularly")
+    
+    print(f"\n{Colors.GREEN}{Colors.BOLD}Happy building! 🚀{Colors.END}\n")
+
+def main():
+    """Main installation function"""
+    print_header("EC2 LFS Development Environment Setup")
+    print_info("This script will install everything you need for LFS build")
+    print_info("Estimated time: 10-15 minutes")
+    print()
+    
+    # Check if running on Ubuntu
+    if not check_ubuntu():
+        print_error("This script is designed for Ubuntu")
+        print_info("You appear to be running a different OS")
+        response = input("Continue anyway? (y/n): ").lower()
+        if response != 'y':
+            print_info("Exiting...")
+            return 1
+    
+    print_info("Running on Ubuntu - proceeding with setup")
+    print()
+    
+    response = input("Continue with installation? (y/n): ").lower()
+    if response != 'y':
+        print_info("Installation cancelled")
+        return 0
+    
+    # Track overall success
+    all_success = True
+    
+    # Run installation steps
+    steps = [
+        ("Update System", update_system),
+        ("Install LFS Build Tools", install_lfs_build_tools),
+        ("Install AWS CLI", install_aws_cli),
+        ("Install AWS SDK", install_aws_sdk),
+        ("Install VS Code Server", install_vscode_server),
+        ("Install GitHub CLI", install_github_cli),
+        ("Setup LFS Environment", setup_lfs_environment),
+        ("Configure GitHub", configure_github),
+        ("Clone Repository", clone_repository),
+        ("Create Aliases", create_helpful_aliases),
+    ]
+    
+    for step_name, step_func in steps:
+        try:
+            if not step_func():
+                all_success = False
+                print_warning(f"{step_name} had issues, but continuing...")
+        except Exception as e:
+            print_error(f"Error in {step_name}: {e}")
+            all_success = False
+    
+    # Create completion marker
+    create_setup_complete_marker()
+    
+    # Print next steps
+    print_next_steps()
+    
+    if all_success:
+        print(f"\n{Colors.GREEN}{Colors.BOLD}All installations completed successfully! 🎉{Colors.END}")
+        return 0
+    else:
+        print(f"\n{Colors.YELLOW}Setup completed with some warnings. Check output above.{Colors.END}")
+        return 1
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print(f"\n{Colors.YELLOW}Installation cancelled by user.{Colors.END}")
+        sys.exit(1)
+    except Exception as e:
+        print_error(f"An unexpected error occurred: {e}")
+        sys.exit(1)
